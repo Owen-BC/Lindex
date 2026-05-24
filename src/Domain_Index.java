@@ -1,3 +1,7 @@
+// Represents a given domain name on the internet. Used to determine if a domain is indexable
+// Copyright (C) 2026  Owen Butcher
+
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
