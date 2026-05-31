@@ -8,45 +8,47 @@ import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class Domain_Index {
-    private String domain_name;
-    private List<Pattern> allowed_robots_txt;
-    private List<Pattern> disallowed_robots_txt;
+public class Domain {
+    private final String domainProtocol;
+    private final String domain_name;
+    private final List<Pattern> allowed_robots_txt;
+    private final List<Pattern> disallowed_robots_txt;
     private Boolean has_sitemap;
+    public final String User_Agent;
     private String sitemap_path;
 
 
-    public Domain_Index(String domain_name) throws IOException {
-        this.domain_name = domain_name;
+    public Domain(java.net.URI domain_name, String User_Agent) throws IOException, InterruptedException {
+        this.domain_name = domain_name.getHost();
+        this.domainProtocol = domain_name.getScheme();
         this.allowed_robots_txt = new ArrayList<>();
         this.disallowed_robots_txt = new ArrayList<>();
         this.has_sitemap = false;
+        this.User_Agent = User_Agent;
 
         parse_robots_txt();
         if(this.has_sitemap)
             parse_sitemap();
+        Thread.sleep(1000);
     }
 
     private void parse_robots_txt() throws IOException {
-        String robots_txt_url = this.domain_name.concat("/robots.txt");
-        URL robots_txt = new URL(robots_txt_url);
-        URLConnection robots_txt_connection = robots_txt.openConnection();
-        String User_Agent = "bot-bromide-crawler/1.0 (contact_bromide_crawler@proton.me) bromide-crawler/1.0";
-        robots_txt_connection.setRequestProperty(
-                "User-Agent",
-                User_Agent
-        );
-        BufferedReader in = new BufferedReader(new InputStreamReader(
-                robots_txt_connection.getInputStream()));
+        String robots_txt_url = this.domainProtocol.concat("://".concat(this.domain_name.concat("/robots.txt")));
+        BufferedReader in;
+        in = WebUtil.Create_Buffer_Reader_From_URL(robots_txt_url,User_Agent);
+        if (in == null) {
+
+            allowed_robots_txt.add(Pattern.compile(".*"));
+            return;
+        }
         String inputLine;
         Pattern allow_patter = Pattern.compile("^Allow: *",Pattern.CASE_INSENSITIVE);
-        Pattern disallow_pattern = Pattern.compile("^disallow: *",Pattern.CASE_INSENSITIVE);
+        Pattern disallow_pattern = Pattern.compile("^Disallow: *",Pattern.CASE_INSENSITIVE);
         Pattern user_agent_pattern = Pattern.compile("^User-agent: *",Pattern.CASE_INSENSITIVE);
         Pattern sitemap_pattern = Pattern.compile("^Sitemap: *",Pattern.CASE_INSENSITIVE);
 
@@ -110,9 +112,6 @@ public class Domain_Index {
                 }
             }
         }
-        // Sort the most specific definitions first
-        allowed_robots_txt.sort(Comparator.comparingInt(s -> s.toString().length()).reversed());
-        disallowed_robots_txt.sort(Comparator.comparingInt(s -> s.toString().length()).reversed());
     }
 
     private void parse_sitemap() {
@@ -121,34 +120,39 @@ public class Domain_Index {
 
 
     // Stupid brute force implementation, use a tree for better performance
-        public boolean check_URL(String URL){
-            // Let us make sure this is even the right domain
-            assert (URL.startsWith(domain_name));
+    public boolean check_URL(String URL){
+        // Let us make sure this is even the right domain
+        assert (URL.startsWith(domain_name));
 
-            boolean allowed = true; // by default, all parts of a site are indexable
-            int current_longest_disallow = 0;
-            int current_longest_allow = 0;
-            // First we check if any of the disallow statements apply or are more specific then the current allow statement
-            for(Pattern disallow_rule: disallowed_robots_txt){
-                Matcher matcher = disallow_rule.matcher(URL);
-                if(matcher.find()) {
-                    if(matcher.end() - matcher.start() > current_longest_disallow)
-                        current_longest_disallow = matcher.end() - matcher.start();
-                }
+        int current_longest_disallow = 0;
+        int current_longest_allow = 0;
+        // First we check if any of the disallow statements apply or are more specific then the current allow statement
+        for(Pattern disallow_rule: disallowed_robots_txt){
+            Matcher matcher = disallow_rule.matcher(URL);
+            if(matcher.find()) {
+                if(matcher.end() - matcher.start() > current_longest_disallow)
+                    current_longest_disallow = matcher.end() - matcher.start();
             }
-
-            if(current_longest_disallow != 0) {
-                for (Pattern allow_rule : allowed_robots_txt) {
-                    Matcher matcher = allow_rule.matcher(URL);
-                    if (matcher.find()) {
-                        if(matcher.end() - matcher.start() > current_longest_allow)
-                            current_longest_allow = matcher.end() - matcher.start();
-                    }
-                }
-            }
-
-
-            // iff a disallow statement applies, check if there is a more specific allow statement.
-            return current_longest_allow >= current_longest_disallow;
         }
+
+        if(current_longest_disallow != 0) {
+            for (Pattern allow_rule : allowed_robots_txt) {
+                Matcher matcher = allow_rule.matcher(URL);
+                if (matcher.find()) {
+                    if(matcher.end() - matcher.start() > current_longest_allow)
+                        current_longest_allow = matcher.end() - matcher.start();
+                }
+            }
+        }
+
+        // Check what the most specific allow clause is, choosing to allow if there is a tie
+        return current_longest_allow >= current_longest_disallow;
+    }
+
+    public WebPage create_webpage(String URL){
+        WebUtil.Create_Buffer_Reader_From_URL(URL,this.User_Agent);
+
+        return null;
+    }
+
 }
