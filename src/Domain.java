@@ -155,4 +155,15 @@ public class Domain {
         return null;
     }
 
+    public String getDomainName(){
+        return this.domain_name;
+    }
+
+    public String getDomainProtocol(){
+        return this.domainProtocol;
+    }
+
+    public String getBaseName(){
+        return getDomainProtocol() + "://" + getDomainName();
+    }
 }
