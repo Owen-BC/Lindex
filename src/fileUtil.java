@@ -3,10 +3,17 @@ import java.util.HashMap;
 import java.util.Hashtable;
 
 public class fileUtil {
-    public static boolean exportWordUsage(Path directory){
+    public static boolean exportWebpageData(Path directory){
 
         return false;
     }
+
+    public static boolean importWebpageData(Path directory){
+
+        return false;
+    }
+
+
 
     private static Hashtable<Integer, Integer> encodeHashTable(Hashtable<String, Integer> data, Hashtable<String, Integer> dict){
 

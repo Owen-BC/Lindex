@@ -1,14 +1,14 @@
 // Takes as input entry points and crawls the internet, respecting robots.txt and only sending 1 request per second per domain.
 // Copyright (C) 2026  Owen Butcher
 
+import org.json.JSONObject;
+
 import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.Hashtable;
-import java.util.List;
+import java.util.*;
 import java.io.FileWriter;
 
 public class Bromide_Domain_Crawler implements Runnable {
@@ -16,17 +16,19 @@ public class Bromide_Domain_Crawler implements Runnable {
     private Domain domain;
     private List<WebPage> pages;
     private List<String> entryURLs;
-    private final List<String> intraDomainURLs;
+    private final HashSet<String> intraDomainURLs;
     private final Hashtable<String, Boolean> checkedTables;
-    private final ArrayList<String> urlsToAdd;
+    private HashSet<String> urlsToAdd;
     private Hashtable<String, Integer> fileEncodeDict;
     private String user_agent;
+    private Date start;
 
     public Bromide_Domain_Crawler(List<String> EntryURLs, String userAgent) {
-        this.intraDomainURLs = new ArrayList<String>();
+        this.intraDomainURLs = new HashSet<String>();
         this.checkedTables = new Hashtable<String, Boolean>();
-        this.urlsToAdd = new ArrayList<>();
+        this.urlsToAdd = new HashSet<>();
         user_agent = userAgent;
+        start = new Date();
         try {
             URI uri = new URI(EntryURLs.getFirst());
             this.domain = new Domain(uri, user_agent);
@@ -53,65 +55,80 @@ public class Bromide_Domain_Crawler implements Runnable {
                 intraDomainURLs.addAll(urlsToAdd);
             }
         }
-
+        intraDomainURLs.addAll(this.entryURLs);
         do{
-           for(String url: intraDomainURLs) {
+            this.urlsToAdd = new HashSet<>();
+            long lastCall = new Date().getTime();
+            for(String url: intraDomainURLs) {
                 if(checkedTables.get(url) == null) {
                     try {
                         if (processURL(domain.getBaseName() + url)) {
-                            Thread.sleep(1000);
+                            Date now = new Date();
+                            long cur = now.getTime();
+                            Thread.sleep(Math.max(1000 - cur + lastCall, 0));
                             count++;
-                            if (count > 6) {
-                                return;
+                            lastCall = cur;
+                            if(count % 10 == 0){
+                                Long uptime = (Long)((now.getTime() - start.getTime()) / 1000);
+                                IO.println("******************************");
+                                IO.println("domain:" + domain.getDomainName());
+                                IO.println("STATUS REPORT");
+                                IO.println("Uptime " + (uptime.toString()));
+                                IO.println("URL's Processed " + ((Integer)count).toString());
+                                IO.println("URL's in queue:" + urlsToAdd.size());
+                                IO.println("Number of minutes till current queue is cleared: " + ((Integer)(urlsToAdd.size() / 60)).toString());
+                                IO.println("******************************");
                             }
                         }
                     } catch (InterruptedException e) {
                         IO.println(String.format("Warning: " + e.toString()));
                     }
                 }
-           }
-           intraDomainURLs.addAll(urlsToAdd);
-        }while(!urlsToAdd.isEmpty());
+            }
+            intraDomainURLs.addAll(urlsToAdd);
 
+
+        }while(!urlsToAdd.isEmpty());
     }
 
     private boolean processURL (String url) throws InterruptedException {
         try {
             if (domain.check_URL(url)) {
-                IO.println(url + " " + new Date());
+//                IO.println(url + " " + new Date());
                 // Domain is valid to crawl
-                String filename = "/media/disk1/crawlerOut/" + domain.getDomainName() + "/" + new URI(url).getPath().replace("/", "-") + ".json";
+                String filename = "/media/disk1/crawlerOut/" + domain.getDomainName() + new URI(url).getPath() + ".json";
                 File f = new File(filename);
-//                if(f.exists() && !f.isDirectory()) {
-////                    FileReader myReader = new FileReader(f);
-////                    JSONObject old = new JSONObject(myReader.readAllAsString());
-////                    DateFormat dateFormat = new SimpleDateFormat("EEE MMM dd HH:mm:ss z yyyy");
-////                    Date updated = dateFormat.parse(old.get("updated").toString());
-////                    URL url2 = new URI(url).toURL();
-////                    URLConnection connection = url2.openConnection();
-////                    connection.setRequestProperty(
-////                            "User-Agent",
-////                            user_agent
-////                    );
-////                    connection.setRequestProperty(
-////                            "If-Modified-Since",
-////                            String.valueOf(updated.getTime())
-////                    );
-//                    return false;
-//                }
-                WebPage webpage = new WebPage(url, user_agent);
-                this.urlsToAdd.addAll(webpage.getIntraDomainLinks());
-                f.getParentFile().mkdirs();   // Creates all missing directories
-                FileWriter myWriter = new FileWriter(filename);
-                myWriter.write(webpage.toJson().toString());
-                myWriter.close();
-                checkedTables.put(url, true);
-                IO.println(new Date());
+                WebPage webpage = null;
+                boolean fresh = false;
+                if(f.exists() && !f.isDirectory() && f.canRead()) {
+                    FileReader myReader = new FileReader(f);
+                    JSONObject old = new JSONObject(myReader.readAllAsString());
+                    webpage = new WebPage(old, user_agent);
+                    fresh = webpage.fresh();
+                } else {
+                    webpage = new WebPage(url, user_agent);
+                }
+                boolean parsed = false;
+                if(!fresh)
+                    parsed = webpage.parse(); // parses webpage and creates record of results
+                List<String> links = webpage.getIntraDomainLinks();
+                for(String s: links){
+                    if(checkedTables.get(s) == null) {
+                        if (domain.check_URL(s)) {
+                            urlsToAdd.add(s);
+                        }
+                    }
+                }
+                if(parsed){
+                    webpage.export();
+                } else {
+                    return false;
+                }
             } else {
                 return false;
             }
         } catch(IOException | URISyntaxException | InterruptedException e){
-            IO.println(url + " Failed to parse");
+            IO.println(url + " Failed to parse, " + e);
             Thread.sleep(1000);
             return false;
         }
@@ -133,7 +150,7 @@ public class Bromide_Domain_Crawler implements Runnable {
             for (File file : files) {
 //                System.out.println(file.getName());
                 String pageName = file.getName().replace("-","/");
-                pageName = pageName.split("\\.json")[0];
+                pageName = pageName.replace(".json", "");
                 checkedTables.put(pageName,true);
             }
         }

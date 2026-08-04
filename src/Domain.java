@@ -99,16 +99,34 @@ public class Domain {
                     }
                     continue;
                 }
-
+                String REGEX_META = "\\.^$|?*+()[]{}";
                 // Check for disallow lines
                 matcher = disallow_pattern.matcher(inputLine);
                 if (matcher.find()) {
                     command_since_user_agent = true;
                     String toappend = inputLine.substring(matcher.end()).strip(); // first char after Allow:
-                    if (!toappend.isEmpty()) {
-                        Pattern pattern = Pattern.compile(toappend);
-                        this.disallowed_robots_txt.add(pattern);
+                    StringBuilder regex = new StringBuilder("^");
+                    // this is dismal, stringbuilders make me sad
+                    // two special cases set out in https://www.rfc-editor.org/rfc/rfc9309.html are * for 0 or more
+                    // characters and $ for matching the end of string. Must escape other regex characters or our parser
+                    // will yell when they are included in the URL path.
+                    for (char c : toappend.toCharArray()) {
+                        switch (c) {
+                            case '*':
+                                regex.append(".*");
+                                break;
+                            case '$':
+                                regex.append("$");
+                                break;
+                            default:
+                                if (REGEX_META.indexOf(c) >= 0) {
+                                    regex.append('\\');
+                                }
+                                regex.append(c);
+                        }
                     }
+                    Pattern pattern = Pattern.compile(String.valueOf(regex));
+                    this.disallowed_robots_txt.add(pattern);
                 }
             }
         }
