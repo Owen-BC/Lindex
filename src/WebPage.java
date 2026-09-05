@@ -4,6 +4,7 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.rmi.server.ExportException;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -13,6 +14,7 @@ import java.util.regex.Pattern;
 public class WebPage {
     private URI URL;
     private String Domain;
+    private String outFolder;
     private String user_agent;
     private String title;
     private Hashtable<String,Integer> wordUsage;
@@ -23,7 +25,7 @@ public class WebPage {
     private int threshHold = 3;
 
 
-    public WebPage(String URL, String user_agent) throws URISyntaxException, IOException, InterruptedException {
+    public WebPage(String URL, String user_agent, String outFolder) throws URISyntaxException, IOException, InterruptedException {
         this.URL = new URI(URL);
         this.user_agent = user_agent;
         this.Domain = this.URL.getHost();
@@ -33,30 +35,23 @@ public class WebPage {
         this.intraDomainLinks = new HashSet<>();
         this.updated = null;
         this.score = 0;
+        this.outFolder = outFolder;
 //        Thread.sleep(1000); // this is a stupid way to enforce one request per second dweebo
     }
 
     public boolean parse(){
-        try {
-            this.parsePageData() ;
-        } catch (ExportException e) {
-            return true; // returned when we get no data from the connection but no error, likely was not updated since last crawl
-        }
-        catch (URISyntaxException | IOException e) {
-            IO.println("Error for WebPage Object " + URL.toString() + ", " + e);
-            return false;
-        }
-        return true;
+        return this.parsePageData();
     }
 
 
-    public WebPage(JSONObject data, String user_agent) throws URISyntaxException, IOException, InterruptedException {
+    public WebPage(JSONObject data, String user_agent, String outFolder) throws URISyntaxException, IOException, InterruptedException {
         this.URL = new URI((String) data.get("URL"));
         this.user_agent = user_agent;
         this.title = data.get("title").toString();
         this.Domain = data.get("Domain").toString();
         this.updated = data.get("updated").toString();
         this.score = (int) data.get("score");
+        this.outFolder = outFolder;
 
         wordUsage = new Hashtable<>();
         JSONObject arr1 = data.getJSONObject("wordUsage");
@@ -79,67 +74,35 @@ public class WebPage {
     }
 
 
-    private void parsePageData() throws URISyntaxException, IOException {
-        BufferedReader in;
-
-        URL url = URL.toURL();
-        URLConnection connection = url.openConnection();
-        connection.setRequestProperty(
-                "User-Agent",
-                user_agent
-        );
-
-        // Used from https://stackoverflow.com/questions/21682448/java-time-in-milliseconds-to-http-format
-        if(updated != null) {
-            connection.setRequestProperty(
-                    "If-Modified-Since",
-                    updated
-            );
-        } else {
-            SimpleDateFormat sdf =
-                    new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US);
-            sdf.setTimeZone(TimeZone.getTimeZone("GMT"));
-            updated = sdf.format(new Date());
+    private boolean parsePageData() {
+        BufferedReader in = WebUtil.Create_Buffer_Reader_From_URL(URL, user_agent, updated);
+        if(in == null){
+            IO.println("Create_Buffer_Reader_From_URL returned null");
+            return false;
         }
-
-        in = new BufferedReader(new InputStreamReader(
-                connection.getInputStream()));
-        StringBuilder fullText = new StringBuilder();
-        String curline;
-        while ((curline = in.readLine()) != null) {
-            fullText.append(curline);
+        if(updated == null) {
+            updated = WebUtil.generateUpdatedDate(new Date());
         }
-        if (fullText.toString().isEmpty()){
-            throw new ExportException(((HttpURLConnection)connection).getResponseMessage());
-        } else {
-            String fulltextString = fullText.toString();
+        String fulltextString = WebUtil.getAllDataFromBufferReader(in);
+        if(fulltextString != null) {
             addTitle(fulltextString);
             wordUsage = WebUtil.ParseHTMLForTextUsage(fulltextString);
             parseDomainLinks(fulltextString);
+        } else {
+            IO.println("getAllDataFromBufferReader returned null");
+            return false;
         }
+        return true;
     }
 
     private void parseDomainLinks(String parseLine) {
-        Pattern hrefs = Pattern.compile("href=\"([^\"]*)\"");
-        Matcher matcher = hrefs.matcher(parseLine);
-        String matched;
-        while (matcher.find()) {
-            String found = matcher.group(1);
-
-            if(!(found.startsWith("http://") | found.startsWith("https://")))
-                found = "https://".concat(this.Domain).concat(found);
-            URI newLink;
-            try {
-                newLink = URI.create(found);
-                //newLink.getHost().getBytes();
-            } catch (Exception e) {
-                continue;
-            }
+        List<URI> URLS = WebUtil.parseHTMLForLinks(this.Domain,parseLine);
+        for(URI newLink: URLS){
             if(newLink.getHost() != null) {
                 if (newLink.getHost().equals(this.Domain) && !newLink.getPath().isEmpty()) {
                     this.intraDomainLinks.add(newLink.getPath());
                 } else if (!newLink.getHost().equals(this.Domain)){
-                    this.interDomainLinks.add(found);
+                    this.interDomainLinks.add(newLink.getPath());
                 }
             }
         }
@@ -179,18 +142,8 @@ public class WebPage {
     public boolean export() throws IOException {
         if(Domain.isEmpty() || updated == null || (wordUsage.isEmpty() && intraDomainLinks.isEmpty() && interDomainLinks.isEmpty()))
             return false; // if we dont have valid information, don't write
-        String filename = "/media/disk1/crawlerOut/" + Domain + URL.getPath() + ".json";
-        File f = new File(filename);
-        if(f.getParentFile().mkdirs() || f.getParentFile().exists()) {   // Creates all missing directories
-            FileWriter myWriter = new FileWriter(filename);
-            myWriter.write(this.toJson().toString());
-            myWriter.close();
-
-            return true;
-        } else {
-            IO.println("Failed to create needed files for " + f.getParentFile());
-        }
-        return false;
+        String filename = outFolder + "domain/" + Domain + URL.getPath() + ".json";
+        return fileUtil.writeFile(filename, this.toJson());
     }
 
     // checks if the link has been checked in the last day, returns true if this is the case and false otherwise

@@ -2,16 +2,19 @@
 // Copyright (C) 2026  Owen Butcher
 
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import org.json.JSONObject;
+
+import java.io.*;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLConnection;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.text.SimpleDateFormat;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
+
+import static java.util.stream.Collectors.toList;
 
 public class Domain {
     private final String domainProtocol;
@@ -20,12 +23,14 @@ public class Domain {
     private final List<Pattern> disallowed_robots_txt;
     private Boolean has_sitemap;
     public final String User_Agent;
+    public final String Out_Folder;
     private String sitemap_path;
 
 
-    public Domain(java.net.URI domain_name, String User_Agent) throws IOException, InterruptedException {
+    public Domain(URI domain_name, String User_Agent, String out_folder) throws IOException, InterruptedException {
         this.domain_name = domain_name.getHost();
         this.domainProtocol = domain_name.getScheme();
+        Out_Folder = out_folder;
         this.allowed_robots_txt = new ArrayList<>();
         this.disallowed_robots_txt = new ArrayList<>();
         this.has_sitemap = false;
@@ -39,14 +44,33 @@ public class Domain {
 
     private void parse_robots_txt() throws IOException {
         String robots_txt_url = this.domainProtocol.concat("://".concat(this.domain_name.concat("/robots.txt")));
-        BufferedReader in;
-        in = WebUtil.Create_Buffer_Reader_From_URL(robots_txt_url,User_Agent);
-        if (in == null) {
-
-            allowed_robots_txt.add(Pattern.compile(".*"));
+        URI URL = WebUtil.createURI(robots_txt_url);
+        if (URL == null)
             return;
+        File cachedFile = getCachedRobotstxt();
+        String lastUpdated = null;
+        if (cachedFile != null) {
+            lastUpdated = WebUtil.generateUpdatedDate(new Date(cachedFile.lastModified()));
         }
-        String inputLine;
+        BufferedReader in;
+        in = WebUtil.Create_Buffer_Reader_From_URL(URL,User_Agent,lastUpdated);
+        String data;
+        if (in == null) {
+            if(cachedFile == null) {
+                // No Robots.txt to parse, we have free rein of the website
+                allowed_robots_txt.add(Pattern.compile(".*"));
+                return;
+            } else {
+                // file not updated, use cached version
+                data = fileUtil.readFile(cachedFile);
+            }
+        } else {
+            data = WebUtil.getAllDataFromBufferReader(in);
+            cacheRobotxtxt(data);
+        }
+        assert data != null;
+        List<String> lines = data.lines().toList();
+
         Pattern allow_patter = Pattern.compile("^Allow: *",Pattern.CASE_INSENSITIVE);
         Pattern disallow_pattern = Pattern.compile("^Disallow: *",Pattern.CASE_INSENSITIVE);
         Pattern user_agent_pattern = Pattern.compile("^User-agent: *",Pattern.CASE_INSENSITIVE);
@@ -54,7 +78,7 @@ public class Domain {
 
         boolean found_user_agent = false;
         boolean command_since_user_agent = false; // we can stop listening after we see a user agent after out command
-        while ((inputLine = in.readLine()) != null) {
+        for(String inputLine: lines) {
             // Strip of comments
             int k = inputLine.indexOf("#");
             if(k != -1) {
@@ -167,12 +191,6 @@ public class Domain {
         return current_longest_allow >= current_longest_disallow;
     }
 
-    public WebPage create_webpage(String URL){
-        WebUtil.Create_Buffer_Reader_From_URL(URL,this.User_Agent);
-
-        return null;
-    }
-
     public String getDomainName(){
         return this.domain_name;
     }
@@ -183,5 +201,29 @@ public class Domain {
 
     public String getBaseName(){
         return getDomainProtocol() + "://" + getDomainName();
+    }
+
+    /** Check crawlerOut/cache/robotstxt/ for the cached version of the domains document
+
+     *
+     * @return File representing the robotstxt file or null if none are found.
+     */
+    private File getCachedRobotstxt(){
+        String filename = this.Out_Folder + "cache/" + domain_name + "/robots.txt";
+        File checkPath = new File(filename);
+        if (checkPath.exists())
+            return new File(filename);
+        return null;
+    }
+
+    /** Check crawlerOut/cache/robotstxt/ for the cached version of the domains document
+
+     *
+     * @return File representing the robotstxt file or null if none are found.
+     */
+    private void cacheRobotxtxt(String data){
+        String filename = this.Out_Folder + "cache/" + domain_name + "/robots.txt";
+        if(!fileUtil.writeFile(filename,data))
+            IO.println("Failed to cache robots.txt at location " + domain_name);
     }
 }
